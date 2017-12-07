@@ -17,13 +17,13 @@ import matplotlib.pyplot as plt
 from operator import itemgetter
 from numpy import exp, dot, zeros, outer, dtype, float32 as REAL
 import annoy
+import itertools
 
-def extract_patterns_in_words(patterns,pattern_counter,word1,word2,max_len):
+def extract_patterns_in_words(patterns,word1,word2,max_len):
     i = 1
     while(word1[:i] == word2[:i]):
         i = i + 1
     if i != 1 and i > max(len(word1[i-1:]), len(word2[i-1:])) < max_len:
-        pattern_counter[("suffix",word1[i-1:], word2[i-1:])] += 1
         if ("suffix",word1[i-1:], word2[i-1:]) in patterns:
             patterns[("suffix",word1[i-1:], word2[i-1:])].append((word1, word2))
         else:
@@ -33,7 +33,6 @@ def extract_patterns_in_words(patterns,pattern_counter,word1,word2,max_len):
     while(word1[-i:] == word2[-i:]):
         i = i + 1
     if i != 1 and max(len(word1[:-i+1]), len(word2[:-i+1])) < max_len:
-        pattern_counter[("prefix",word1[:-i+1], word2[:-i+1])] += 1
         if ("prefix",word1[:-i+1], word2[:-i+1]) in patterns:
             patterns[("prefix",word1[:-i+1], word2[:-i+1])].append((word1, word2))
         else:
@@ -41,27 +40,21 @@ def extract_patterns_in_words(patterns,pattern_counter,word1,word2,max_len):
 #         patterns[("prefix",word1[:-i+1], word2[:-i+1], word1, word2)] += 1
     return patterns
 
+
 def build_pattern_dict(vocab,max_len = 6):
     if os.path.exists('../data/patterns_'+ str(len(vocab))):
         patterns_file_r = open('../data/patterns_'+ str(len(vocab)), 'rb')
-        pattern_counter_file_r = open('../data/patterns_counter_'+ str(len(vocab)), 'rb')
         patterns = pickle.load(patterns_file_r)
-        pattern_counter = pickle.load(pattern_counter_file_r)
     else:
-        patterns_file_w = open('../data/patterns_'+ str(len(vocab)),"wb" )
-        pattern_counter_file_w = open('../data/patterns_counter_'+ str(len(vocab)),"wb" )
         patterns  = defaultdict(list)
-#         print (patterns)
-        pattern_counter = Counter()
         for word in vocab:
             for second_word in vocab:
                 if word != second_word:
-                    extract_patterns_in_words(patterns,pattern_counter,word,second_word,max_len)
+                    extract_patterns_in_words(patterns,word,second_word,max_len)
+        patterns_file_w = open('../data/patterns_'+ str(len(vocab)),"wb" )
         pickle.dump(patterns, patterns_file_w)
         patterns_file_w.close()
-        pickle.dump(pattern_counter, pattern_counter_file_w)
-        pattern_counter_file_w.close()
-    return patterns, pattern_counter
+    return patterns
 
 
 def downsample_patterns():
@@ -143,7 +136,8 @@ def get_annoy():
 
 
 hit_rates_rules = {}
-def get_hit_rules(pattern,support_set, hit_rates_rules):
+def get_hit_rules(t):
+    pattern, support_set = t
     hit_rates_word_pair = {}
     for pair1 in support_set:
         hit_count = 0
@@ -155,38 +149,51 @@ def get_hit_rules(pattern,support_set, hit_rates_rules):
         if hit_count:
             hit_rates_word_pair[pair1] =  hit_pairs
     if len(support_set) != 1 and hit_rates_word_pair:
-        hit_rates_rules[pattern] = hit_rates_word_pair
+        return pattern, hit_rates_word_pair
+    return pattern, hit_rates_word_pair
 
-def init_worker(mps, fps, cut):
-    global memorizedPaths, filepaths, cutoff
-    global DG
-
-    print ("process initializing", current_process())
-    memorizedPaths, filepaths, cutoff = mps, fps, cut
-    DG = 1##nx.read_gml("KeggComplete.gml", relabel = True)
-    
+def iterator_slice(iterator, length):
+    iterator = iter(iterator)
+    while True:
+        res = tuple(itertools.islice(iterator, length))
+        if not res:
+            break
+        yield res
+ 
 # word_vectors = KeyedVectors.load_word2vec_format('/home/raja/models/GoogleNews-vectors-negative300.bin.gz', binary=True)
 if __name__ == '__main__':
-    
     word_vectors = KeyedVectors.load_word2vec_format('/home/raja/models/GoogleNews-vectors-negative300.bin.gz', binary=True, limit=2000)
 
-    patterns, pattern_counter = build_pattern_dict(word_vectors.vocab.keys())
+    patterns = build_pattern_dict(word_vectors.vocab.keys())
+    print ("done with building")
 
     sampled_patterns = downsample_patterns()
+    sampled_patterns_w = open('../data/sampled_patterns_'+ str(len(word_vectors.vocab)),"wb" )
+    pickle.dump(sampled_patterns,sampled_patterns_w)
+    sampled_patterns_w.close()
 
     annoy_index = get_annoy()
     
 
-    hit_rates = Manager().dict()
-    m = Manager()
-    memorizedPaths = m.dict()
-    filepaths = m.dict()
-    cutoff = 1 ##
+    #hit_rates = Manager().dict()
+    hit_rates = {}
+        
+    pool = Pool()
+    works = ((pattern, support_set,) for pattern,support_set in sampled_patterns.items())
+    cursor_iterator = iterator_slice(works, 1)
+    #print (pool.apply(get_hit_rules,next(cursor_iterator)))
+    t = pool.imap(get_hit_rules,works)
+    for pattern, hit_rates_word_pair in t:
+        hit_rates[pattern] = hit_rates_word_pair
 
-
-    pool = Pool(initializer=init_worker, initargs=(memorizedPaths,filepaths,cutoff))
-    pool.starmap(get_hit_rules,((pattern, support_set, hit_rates) for pattern,support_set in sampled_patterns.items()), chunksize = pool._processes)
+    #hit_rates[pattern] = hit_rates_word_pair
+#     print (collections.Counter(pids))
+    print (len(hit_rates))
 
 
 #     hit_rates = get_hit_rate(sampled_patterns, annoy_pair_wise_similarity, annoy_index)
-    print (len(hit_rates))
+    output_hit_rates = {}
+    output_hit_rates.update(hit_rates)
+    hit_rate_file_w = open('../data/hitrate_'+ str(len(word_vectors.vocab)),"wb" )
+    pickle.dump(hit_rates, hit_rate_file_w)
+    hit_rate_file_w.close()
