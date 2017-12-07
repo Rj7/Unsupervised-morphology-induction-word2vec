@@ -135,9 +135,7 @@ def get_annoy():
     return annoy_index
 
 
-hit_rates_rules = {}
-def get_hit_rules(t):
-    pattern, support_set = t
+def get_hit_rules(pattern, support_set,hit_rates_rules):
     hit_rates_word_pair = {}
     for pair1 in support_set:
         hit_count = 0
@@ -149,8 +147,7 @@ def get_hit_rules(t):
         if hit_count:
             hit_rates_word_pair[pair1] =  hit_pairs
     if len(support_set) != 1 and hit_rates_word_pair:
-        return pattern, hit_rates_word_pair
-    return pattern, hit_rates_word_pair
+        hit_rates_rules[pattern] = hit_rates_word_pair
 
 def iterator_slice(iterator, length):
     iterator = iter(iterator)
@@ -162,7 +159,7 @@ def iterator_slice(iterator, length):
  
 # word_vectors = KeyedVectors.load_word2vec_format('/home/raja/models/GoogleNews-vectors-negative300.bin.gz', binary=True)
 if __name__ == '__main__':
-    word_vectors = KeyedVectors.load_word2vec_format('/home/raja/models/GoogleNews-vectors-negative300.bin.gz', binary=True, limit=2000)
+    word_vectors = KeyedVectors.load_word2vec_format('/home/raja/models/GoogleNews-vectors-negative300.bin.gz', binary=True, limit=100000)
 
     patterns = build_pattern_dict(word_vectors.vocab.keys())
     print ("done with building")
@@ -175,17 +172,10 @@ if __name__ == '__main__':
     annoy_index = get_annoy()
     
 
-    #hit_rates = Manager().dict()
-    hit_rates = {}
+    hit_rates = Manager().dict()
         
     pool = Pool()
-    works = ((pattern, support_set,) for pattern,support_set in sampled_patterns.items())
-    cursor_iterator = iterator_slice(works, 1)
-    #print (pool.apply(get_hit_rules,next(cursor_iterator)))
-    t = pool.imap(get_hit_rules,works)
-    for pattern, hit_rates_word_pair in t:
-        hit_rates[pattern] = hit_rates_word_pair
-
+    pool.starmap(get_hit_rules,((pattern, support_set, hit_rates) for pattern,support_set in sampled_patterns.items()), chunksize = pool._processes)
     #hit_rates[pattern] = hit_rates_word_pair
 #     print (collections.Counter(pids))
     print (len(hit_rates))
@@ -195,5 +185,5 @@ if __name__ == '__main__':
     output_hit_rates = {}
     output_hit_rates.update(hit_rates)
     hit_rate_file_w = open('../data/hitrate_'+ str(len(word_vectors.vocab)),"wb" )
-    pickle.dump(hit_rates, hit_rate_file_w)
+    pickle.dump(output_hit_rates, hit_rate_file_w)
     hit_rate_file_w.close()
