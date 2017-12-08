@@ -93,14 +93,19 @@ def annoy_pair_wise_similarity(word_pair1, word_pair2,annoy_index, topn = 10):
             return True
     return False
 
-def get_similarity_rank(word_pair1, word_pair2, topn=500):
+
+def get_similarity_rank(word_pair1, word_pair2, similarity_dict):
+    topn = 500
     closest_n = word_vectors.most_similar(positive=[word_pair2[0], word_pair1[1]], negative=[word_pair1[0]], topn=topn, indexer=annoy_index)
 #     print (word_pair2[1])
 #     print (closest_n)
+    outside_topn = True
     for n,(word, cos_sim) in enumerate(closest_n):
         if word == word_pair2[1]:
-            return (n, cos_sim)
-    return (topn, 0)
+            outside_topn = False
+            similarity_dict[word_pair1, word_pair2] = (n, cos_sim)
+    if outside_topn:
+        similarity_dict[word_pair1, word_pair2] = (topn, 0)
 
 
 def get_hit_rate(patterns, similarity_function, annoy_index=None):
@@ -238,11 +243,18 @@ def build_graph(G, morphological_rules):
     logging.info("Adding edges to the graph")
     MIN_RANK = 3
     MIN_COS = 0.5
+    similarity_dict = Manager().dict()
+    jobs = (((word1,word2),(word3,word4), similarity_dict)
+            for (word1, word2),(morp_rule, hit_rate,support_set) in morphological_rules.items()
+            for (word3, word4) in support_set)
+    pool = Pool()
+    pool.starmap(get_similarity_rank, jobs, chunksize=pool._processes)
+
     for dw,support in morphological_rules.items():
         morp_rule, hit_rate,support_set = support
         (word1, word2) = dw
         for (word3, word4) in support_set:
-            (rank,cos_sim) = get_similarity_rank((word1,word2),(word3,word4))
+            (rank,cos_sim) = similarity_dict[(word1,word2),(word3,word4)]
             if rank < MIN_RANK and cos_sim > MIN_COS:
                 if not G.has_edge(word3,word4,key=dw):
                     G.add_edge(word3,word4,key=dw,cos=cos_sim,rank=rank)
