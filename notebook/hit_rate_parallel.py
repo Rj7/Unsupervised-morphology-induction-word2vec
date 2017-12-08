@@ -171,7 +171,7 @@ if __name__ == '__main__':
     logging.info("Length of the Vocab: %s", len(word_vectors.vocab))
     
     logging.info("Building patterns..")
-    patterns = build_pattern_dict(word_vectors.vocab.keys())
+    sampled_patterns = build_pattern_dict(word_vectors.vocab.keys())
 
     logging.info ("Getting annoyed")
     annoy_index = get_annoy()
