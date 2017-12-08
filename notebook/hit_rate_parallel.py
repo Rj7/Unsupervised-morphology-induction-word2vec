@@ -19,6 +19,9 @@ from numpy import exp, dot, zeros, outer, dtype, float32 as REAL
 import annoy
 import itertools
 
+FORMAT = '%(asctime)-15s %(message)s'
+logging.basicConfig(format=FORMAT, level=logging.INFO, filename='morph_induction.log')
+
 def extract_patterns_in_words(patterns,word1,word2,max_len):
     i = 1
     while(word1[:i] == word2[:i]):
@@ -42,8 +45,8 @@ def extract_patterns_in_words(patterns,word1,word2,max_len):
 
 
 def build_pattern_dict(vocab,max_len = 6):
-    if os.path.exists('../data/patterns_'+ str(len(vocab))):
-        patterns_file_r = open('../data/patterns_'+ str(len(vocab)), 'rb')
+    if os.path.exists('../data/sampled_patterns_'+ str(len(vocab))):
+        patterns_file_r = open('../data/sampled_patterns_'+ str(len(vocab)), 'rb')
         patterns = pickle.load(patterns_file_r)
     else:
         patterns  = defaultdict(list)
@@ -51,13 +54,15 @@ def build_pattern_dict(vocab,max_len = 6):
             for second_word in vocab:
                 if word != second_word:
                     extract_patterns_in_words(patterns,word,second_word,max_len)
-        patterns_file_w = open('../data/patterns_'+ str(len(vocab)),"wb" )
-        pickle.dump(patterns, patterns_file_w)
+        logging.info("Downsampling patterns..")
+        sampled_patterns = downsample_patterns(patterns)
+        patterns_file_w = open('../data/sampled_patterns_'+ str(len(vocab)),"wb" )
+        pickle.dump(sampled_patterns, patterns_file_w)
         patterns_file_w.close()
     return patterns
 
 
-def downsample_patterns():
+def downsample_patterns(patterns):
     #Downsample to include only top 1000
     pattern_1000 = defaultdict(list)
     for pattern,items in patterns.items():
@@ -124,6 +129,7 @@ def get_hit_rate(patterns, similarity_function, annoy_index=None):
     
 
 def get_annoy():
+    dims = 100
     annoy_file_name = '../data/annoy_index__100w2v_3000000'
     if os.path.exists(annoy_file_name):
         annoy_index = AnnoyIndexer()
@@ -159,26 +165,23 @@ def iterator_slice(iterator, length):
  
 # word_vectors = KeyedVectors.load_word2vec_format('/home/raja/models/GoogleNews-vectors-negative300.bin.gz', binary=True)
 if __name__ == '__main__':
-    word_vectors = KeyedVectors.load_word2vec_format('/home/raja/models/GoogleNews-vectors-negative300.bin.gz', binary=True, limit=100000)
-
+    
+    logging.info("\n\n\nLoading Embeddings..")
+    word_vectors = KeyedVectors.load_word2vec_format('/home/raja/models/glove50.txt', binary=False)
+    logging.info("Length of the Vocab: %s", len(word_vectors.vocab))
+    
+    logging.info("Building patterns..")
     patterns = build_pattern_dict(word_vectors.vocab.keys())
-    print ("done with building")
 
-    sampled_patterns = downsample_patterns()
-    sampled_patterns_w = open('../data/sampled_patterns_'+ str(len(word_vectors.vocab)),"wb" )
-    pickle.dump(sampled_patterns,sampled_patterns_w)
-    sampled_patterns_w.close()
-
+    logging.info ("Getting annoyed")
     annoy_index = get_annoy()
     
-
+    logging.info ("Getting hit rates")
     hit_rates = Manager().dict()
         
     pool = Pool()
     pool.starmap(get_hit_rules,((pattern, support_set, hit_rates) for pattern,support_set in sampled_patterns.items()), chunksize = pool._processes)
-    #hit_rates[pattern] = hit_rates_word_pair
-#     print (collections.Counter(pids))
-    print (len(hit_rates))
+    logging.info ("No of hits" + str(len(hit_rates)))
 
 
 #     hit_rates = get_hit_rate(sampled_patterns, annoy_pair_wise_similarity, annoy_index)
