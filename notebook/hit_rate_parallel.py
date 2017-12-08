@@ -45,6 +45,22 @@ def extract_patterns_in_words(patterns,word1,word2,max_len):
     return patterns
 
 
+def chunks(l, n):
+    """Yield successive n-sized chunks from l."""
+    for i in range(0, len(l), n):
+        yield l[i:i + n]
+
+
+def parallel_build_pattern(vocab_chunk,vocab):
+    patterns = {}
+    MAX_LEN = 6
+    for word in vocab_chunk:
+        for second_word in vocab:
+            if word != second_word:
+                extract_patterns_in_words(patterns, word, second_word, MAX_LEN)
+    return patterns
+
+
 def build_pattern_dict(vocab,max_len = 6):
     if os.path.exists('../data/sampled_patterns_'+ str(len(vocab))):
         logging.info("Loading patterns from file")
@@ -54,11 +70,25 @@ def build_pattern_dict(vocab,max_len = 6):
         return sampled_patterns
     else:
         logging.info("Creating patterns")
-        patterns  = defaultdict(list)
-        for word in vocab:
-            for second_word in vocab:
-                if word != second_word:
-                    extract_patterns_in_words(patterns,word,second_word,max_len)
+        # patterns  = {}
+        # for word in vocab:
+        #     for second_word in vocab:
+        #         if word != second_word:
+        #             extract_patterns_in_words(patterns,word,second_word,max_len)
+        patterns = {}
+        pool = Pool()
+        # Split vocab into 100 chunks to run pattern building in parallel
+        vocab_chunks = list(chunks(list(vocab), int(len(vocab)/100)))
+        jobs = [(vocab_chunk,list(vocab)) for vocab_chunk in vocab_chunks]
+        job_results = pool.starmap(parallel_build_pattern,jobs,chunksize=pool._processes)
+        logging.info("Merging Results")
+        for result in job_results:
+            for key in result.keys():
+                if key in patterns:
+                    patterns[key] = result[key] + patterns[key]
+                else:
+                    patterns[key] = result[key]
+        logging.info("length of pattern: %s", len(patterns))
         logging.info("Downsampling patterns..")
         sampled_patterns = downsample_patterns(patterns)
         patterns_file_w = open('../data/sampled_patterns_'+ str(len(vocab)),"wb" )
@@ -139,9 +169,9 @@ def get_hit_rate(patterns, similarity_function, annoy_index=None):
         return hit_rates_rules
     
 
-def get_annoy():
+def get_annoy(w2v, embedding_type = 'w2v'):
     dims = 100
-    annoy_file_name = '../data/annoy_index__100w2v_3000000'
+    annoy_file_name = '../data/annoy_index_' + '_' + str(dims) + '_' + embedding_type + '_' + str(len(w2v.vocab))
     if os.path.exists(annoy_file_name):
         logging.info("Loading Annoy from file")
         annoy_index = AnnoyIndexer()
@@ -314,8 +344,8 @@ def normalize_graph(G):
 if __name__ == '__main__':
     
     logging.info ("\n\n\nLoading Embeddings..")
-    word_vectors = KeyedVectors.load_word2vec_format('/home/raja/models/GoogleNews-vectors-negative300.bin.gz', binary=True)
-    vocab_input = KeyedVectors.load_word2vec_format('/home/raja/models/GoogleNews-vectors-negative300.bin.gz', binary=True, limit = 100000)
+    word_vectors = KeyedVectors.load_word2vec_format('/home/raja/models/glove50.txt', binary=False, limit=10000)
+    vocab_input = KeyedVectors.load_word2vec_format('/home/raja/models/glove50.txt', binary=False, limit=10000)
     vocab_size = len(vocab_input.vocab)
     logging.info ("Length of the Vocab: %s", vocab_size)
     
@@ -323,7 +353,7 @@ if __name__ == '__main__':
     sampled_patterns = build_pattern_dict(vocab_input.vocab.keys())
 
     logging.info ("Getting annoyed")
-    annoy_index = get_annoy()
+    annoy_index = get_annoy(word_vectors, 'glove')
     
     logging.info ("Getting hit rates")
     hit_rates = get_hit_rates(sampled_patterns, vocab_size)
