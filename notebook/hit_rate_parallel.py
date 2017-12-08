@@ -105,12 +105,12 @@ def get_similarity_rank(word_pair1, word_pair2, topn=500):
 
 def get_hit_rate(patterns, similarity_function, annoy_index=None):
     if False:
-        hit_rate_file_r = open('../data/hitrate_'+ str(len(word_vectors.vocab)), 'rb')
+        hit_rate_file_r = open('../data/hitrate_'+ str(len(vocab_input.vocab)), 'rb')
         hit_rates_rules = pickle.load(hit_rate_file_r)
         hit_rate_file_r.close()
         return hit_rates_rules
     else:
-        hit_rate_file_w = open('../data/hitrate_'+ str(len(word_vectors.vocab)),"wb" )
+        hit_rate_file_w = open('../data/hitrate_'+ str(len(vocab_input.vocab)),"wb" )
         hit_rates_rules = {}
         for (pattern,support_set) in patterns.items():
             hit_rates_word_pair = {}
@@ -141,7 +141,7 @@ def get_annoy():
         logging.info("Loading Annoy from file")
         annoy_index = AnnoyIndexer()
         annoy_index.load(annoy_file_name)
-#         annoy_index.model = word_vectors
+        annoy_index.model = word_vectors
     else:
         logging.info("Creating Annoy")
         annoy_index = AnnoyIndexer(word_vectors,dims)
@@ -192,6 +192,7 @@ def get_hit_rates(sampled_patterns, vocab_size):
         hit_rate_file_w = open(hit_rate_file_name,"wb" )
         pickle.dump(output_hit_rates, hit_rate_file_w)
         hit_rate_file_w.close()
+        del hit_rates
         return output_hit_rates
 
 
@@ -257,7 +258,7 @@ def build_graph(G, morphological_rules):
 def normalize_graph(G):
     for node in list(G.nodes):
         for neighbor in list(G.neighbors(node)):
-            if word_vectors.vocab[node].count > word_vectors.vocab[neighbor].count:
+            if vocab_input.vocab[node].count > vocab_input.vocab[neighbor].count:
                 if G.has_edge(node, neighbor):
                     G.remove_edges_from(set(G.in_edges(neighbor,keys=True)) and set(G.out_edges(node,keys=True)))
                 if G.number_of_edges(neighbor, node) > 1:
@@ -301,12 +302,13 @@ def normalize_graph(G):
 if __name__ == '__main__':
     
     logging.info ("\n\n\nLoading Embeddings..")
-    word_vectors = KeyedVectors.load_word2vec_format('/home/raja/models/GoogleNews-vectors-negative300.bin.gz', binary=True, limit = 100000)
-    vocab_size = len(word_vectors.vocab)
+    word_vectors = KeyedVectors.load_word2vec_format('/home/raja/models/GoogleNews-vectors-negative300.bin.gz', binary=True)
+    vocab_input = KeyedVectors.load_word2vec_format('/home/raja/models/GoogleNews-vectors-negative300.bin.gz', binary=True, limit = 100000)
+    vocab_size = len(vocab_input.vocab)
     logging.info ("Length of the Vocab: %s", vocab_size)
     
     logging.info ("Getting patterns..")
-    sampled_patterns = build_pattern_dict(word_vectors.vocab.keys())
+    sampled_patterns = build_pattern_dict(vocab_input.vocab.keys())
 
     logging.info ("Getting annoyed")
     annoy_index = get_annoy()
@@ -319,7 +321,7 @@ if __name__ == '__main__':
 
     logging.info ("Building Graph")
     G = nx.MultiDiGraph()
-    G.add_nodes_from(word_vectors.vocab.keys())
+    G.add_nodes_from(vocab_input.vocab.keys())
 
     logging.info ("Added nodes to Graph")
     G = build_graph(G, morphological_rules)
