@@ -18,6 +18,7 @@ from operator import itemgetter
 from numpy import exp, dot, zeros, outer, dtype, float32 as REAL
 import annoy
 import itertools
+import sys
 
 FORMAT = '%(asctime)-15s %(message)s'
 logging.basicConfig(format=FORMAT, level=logging.INFO, filename='morph_induction.log')
@@ -46,9 +47,13 @@ def extract_patterns_in_words(patterns,word1,word2,max_len):
 
 def build_pattern_dict(vocab,max_len = 6):
     if os.path.exists('../data/sampled_patterns_'+ str(len(vocab))):
+        logging.info("Loading patterns from file")
         patterns_file_r = open('../data/sampled_patterns_'+ str(len(vocab)), 'rb')
-        patterns = pickle.load(patterns_file_r)
+        sampled_patterns = pickle.load(patterns_file_r)
+        patterns_file_r.close()
+        return sampled_patterns
     else:
+        logging.info("Creating patterns")
         patterns  = defaultdict(list)
         for word in vocab:
             for second_word in vocab:
@@ -59,7 +64,7 @@ def build_pattern_dict(vocab,max_len = 6):
         patterns_file_w = open('../data/sampled_patterns_'+ str(len(vocab)),"wb" )
         pickle.dump(sampled_patterns, patterns_file_w)
         patterns_file_w.close()
-    return patterns
+        return sampled_patterns
 
 
 def downsample_patterns(patterns):
@@ -89,19 +94,20 @@ def annoy_pair_wise_similarity(word_pair1, word_pair2,annoy_index, topn = 10):
     return False
 
 def get_similarity_rank(word_pair1, word_pair2, topn=500):
-    closest_n = word_vectors.most_similar(positive=[word_pair2[0], word_pair1[1]], negative=[word_pair1[0]], topn=topn)
+    closest_n = word_vectors.most_similar(positive=[word_pair2[0], word_pair1[1]], negative=[word_pair1[0]], topn=topn, indexer=annoy_index)
 #     print (word_pair2[1])
 #     print (closest_n)
     for n,(word, cos_sim) in enumerate(closest_n):
         if word == word_pair2[1]:
             return (n, cos_sim)
-    return (None, None)
+    return (topn, 0)
 
 
 def get_hit_rate(patterns, similarity_function, annoy_index=None):
     if False:
         hit_rate_file_r = open('../data/hitrate_'+ str(len(word_vectors.vocab)), 'rb')
         hit_rates_rules = pickle.load(hit_rate_file_r)
+        hit_rate_file_r.close()
         return hit_rates_rules
     else:
         hit_rate_file_w = open('../data/hitrate_'+ str(len(word_vectors.vocab)),"wb" )
@@ -132,10 +138,12 @@ def get_annoy():
     dims = 100
     annoy_file_name = '../data/annoy_index__100w2v_3000000'
     if os.path.exists(annoy_file_name):
+        logging.info("Loading Annoy from file")
         annoy_index = AnnoyIndexer()
         annoy_index.load(annoy_file_name)
 #         annoy_index.model = word_vectors
     else:
+        logging.info("Creating Annoy")
         annoy_index = AnnoyIndexer(word_vectors,dims)
         annoy_index.save(annoy_file_name)
     return annoy_index
@@ -162,31 +170,162 @@ def iterator_slice(iterator, length):
         if not res:
             break
         yield res
- 
+
+
+def get_hit_rates(sampled_patterns, vocab_size):
+    hit_rate_file_name = '../data/hitrate_' + str(vocab_size)
+    if os.path.exists(hit_rate_file_name):
+        logging.info("Loading hit rates from file")
+        hit_rate_r = open(hit_rate_file_name, 'rb')
+        hit_rates = pickle.load(hit_rate_r)
+        hit_rate_r.close()
+        return hit_rates
+    else:
+        logging.info("Creating hit rates")
+        hit_rates = Manager().dict()
+        pool = Pool()
+        pool.starmap(get_hit_rules,((pattern, support_set, hit_rates) for pattern,support_set in sampled_patterns.items()), chunksize = pool._processes)
+        logging.info ("No of hits %s", len(hit_rates))
+    #     hit_rates = get_hit_rate(sampled_patterns, annoy_pair_wise_similarity, annoy_index)
+        output_hit_rates = {}
+        output_hit_rates.update(hit_rates)
+        hit_rate_file_w = open(hit_rate_file_name,"wb" )
+        pickle.dump(output_hit_rates, hit_rate_file_w)
+        hit_rate_file_w.close()
+        return output_hit_rates
+
+
+def update_morpho_rules(patterns, sampled_patterns):
+    """ Compute best direction vector(s) that explain many rules greedily.
+    The recursion stops when it finds all direction vectors explains less than a predefined number of words (10)
+    """
+    morphological_rules = {}
+    MIN_EXPLAINS_COUNT = 4
+    for pattern in patterns:
+        transformations = patterns[pattern]
+        support_set = set(sampled_patterns[pattern])
+        while(True):
+            transformations_by_count = sorted(transformations.items(), key=lambda kv: len(kv[1]), reverse=True)
+            best = transformations_by_count[0]
+    #         print (transformations_by_count)
+    #         print (transformations)
+            if len(best[1]) >= MIN_EXPLAINS_COUNT:
+                morphological_rules[best[0]] = (pattern, len(best[1]) / float(len(support_set)),  best[1])
+    #             directions.append(best)
+                del transformations[best[0]]
+            else:
+                break
+
+            #Remove all explained pairs from the support set
+            #TODO: Remove best[0] from support set and transformations
+            support_set = support_set - best[1]
+            for k, v in transformations.items():
+    #             print ("*"*50)
+    #             print (transformations[k])
+                transformations[k] = transformations[k] - best[1]
+    #             print (transformations[k])
+    #             print ("__"*50)
+
+            transformations_by_count.pop(0)
+            if not (len(support_set) >= MIN_EXPLAINS_COUNT and len(transformations_by_count) and len(transformations_by_count[0][1]) >= MIN_EXPLAINS_COUNT):
+                break
+    logging.info("No of morphological rules: %s", len(morphological_rules))
+    return morphological_rules
+
+
+def build_graph(G, morphological_rules):
+    logging.info("Adding edges to the graph")
+    MIN_RANK = 3
+    MIN_COS = 0.5
+    for dw,support in morphological_rules.items():
+        morp_rule, hit_rate,support_set = support
+        (word1, word2) = dw
+        for (word3, word4) in support_set:
+            (rank,cos_sim) = get_similarity_rank((word1,word2),(word3,word4))
+            if rank < MIN_RANK and cos_sim > MIN_COS:
+                if not G.has_edge(word3,word4,key=dw):
+                    G.add_edge(word3,word4,key=dw,cos=cos_sim,rank=rank)
+            else:
+    #             print (rank,cos_sim, word3, word2, dw)
+                pass
+    
+    logging.info("No of nodes in graph: %s", len(G.nodes))
+    logging.info("No of edges in graph: %s", len(G.edges))
+    return G
+
+
+def normalize_graph(G):
+    for node in list(G.nodes):
+        for neighbor in list(G.neighbors(node)):
+            if word_vectors.vocab[node].count > word_vectors.vocab[neighbor].count:
+                if G.has_edge(node, neighbor):
+                    G.remove_edges_from(set(G.in_edges(neighbor,keys=True)) and set(G.out_edges(node,keys=True)))
+                if G.number_of_edges(neighbor, node) > 1:
+    #                 print (list(G.in_edges(node,keys=True)))
+                    n_list = [(G[neighbor][node][item]['rank'], G[neighbor][node][item]['cos'], item) for item in (G[neighbor][node].keys())]
+                    min_rank_edge = min(n_list,key=itemgetter(0))
+                    max_cos_edge = max(n_list,key=itemgetter(1))
+    #                 print (list(G.in_edges(node,keys=True)))
+                    remove_edges = [x for x in list(G.in_edges(node,keys=True)) if x != (neighbor,node,min_rank_edge[2])]
+    #                 print (remove_edges)
+                    G.remove_edges_from(remove_edges)
+                    if G.number_of_edges(neighbor, node) > 1:
+                        remove_edges = [x for x in list(G.in_edges(node,keys=True)) if x != (neighbor,node,max_cos_edge[2])]
+                        G.remove_edges_from(remove_edges)
+            else:
+                if G.has_edge(neighbor, node):
+                    G.remove_edges_from(set(G.in_edges(node,keys=True)) and set(G.out_edges(neighbor,keys=True)))
+                if G.number_of_edges(node, neighbor) > 1:
+                    n_list = [(G[node][neighbor][item]['rank'], G[node][neighbor][item]['cos'], item) for item in (G[node][neighbor].keys())]
+                    min_rank_edge = min(n_list,key=itemgetter(0))
+                    max_cos_edge = max(n_list,key=itemgetter(1))
+                    remove_edges = [x for x in list(G.in_edges(neighbor,keys=True)) if x != (node,neighbor,min_rank_edge[2])]
+                    G.remove_edges_from(remove_edges)
+                    if G.number_of_edges(node, neighbor) > 1:
+                        remove_edges = [x for x in list(G.in_edges(neighbor,keys=True)) if x != (node,neighbor,max_cos_edge[2])]
+                        G.remove_edges_from(remove_edges)
+
+    logging.info("No of nodes in graph: %s", len(G.nodes))
+    logging.info("No of edges in graph: %s", len(G.edges))
+
+    norm_graph_file = '../data/norm_graph_' + str(len(G.nodes)) + '_' + str(len(G.edges))
+    normalized_graph_w = open(norm_graph_file,"wb" )
+    pickle.dump(G, normalized_graph_w)
+    normalized_graph_w.close()
+
+    logging.info("Saved graph file to %s", norm_graph_file)
+    return G
+
+
 # word_vectors = KeyedVectors.load_word2vec_format('/home/raja/models/GoogleNews-vectors-negative300.bin.gz', binary=True)
 if __name__ == '__main__':
     
-    logging.info("\n\n\nLoading Embeddings..")
-    word_vectors = KeyedVectors.load_word2vec_format('/home/raja/models/glove50.txt', binary=False)
-    logging.info("Length of the Vocab: %s", len(word_vectors.vocab))
+    logging.info ("\n\n\nLoading Embeddings..")
+    word_vectors = KeyedVectors.load_word2vec_format('/home/raja/models/GoogleNews-vectors-negative300.bin.gz', binary=True, limit = 100000)
+    vocab_size = len(word_vectors.vocab)
+    logging.info ("Length of the Vocab: %s", vocab_size)
     
-    logging.info("Building patterns..")
+    logging.info ("Getting patterns..")
     sampled_patterns = build_pattern_dict(word_vectors.vocab.keys())
 
     logging.info ("Getting annoyed")
     annoy_index = get_annoy()
     
     logging.info ("Getting hit rates")
-    hit_rates = Manager().dict()
-        
-    pool = Pool()
-    pool.starmap(get_hit_rules,((pattern, support_set, hit_rates) for pattern,support_set in sampled_patterns.items()), chunksize = pool._processes)
-    logging.info ("No of hits" + str(len(hit_rates)))
+    hit_rates = get_hit_rates(sampled_patterns, vocab_size)
 
+    logging.info ("Getting Morphological rules")
+    morphological_rules = update_morpho_rules(hit_rates,sampled_patterns)
 
-#     hit_rates = get_hit_rate(sampled_patterns, annoy_pair_wise_similarity, annoy_index)
-    output_hit_rates = {}
-    output_hit_rates.update(hit_rates)
-    hit_rate_file_w = open('../data/hitrate_'+ str(len(word_vectors.vocab)),"wb" )
-    pickle.dump(output_hit_rates, hit_rate_file_w)
-    hit_rate_file_w.close()
+    logging.info ("Building Graph")
+    G = nx.MultiDiGraph()
+    G.add_nodes_from(word_vectors.vocab.keys())
+
+    logging.info ("Added nodes to Graph")
+    G = build_graph(G, morphological_rules)
+
+    logging.info ("Normalizing graph based on count")
+    G = normalize_graph(G)
+    logging.info ("END!!")
+
+    sys.exit()
