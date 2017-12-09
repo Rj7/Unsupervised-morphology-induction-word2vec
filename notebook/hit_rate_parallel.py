@@ -60,14 +60,19 @@ def chunks(l, n):
         yield l[i:i + n]
 
 
-def parallel_build_pattern(vocab_chunk,vocab = vocab):
+def parallel_build_pattern(vocab_chunk,i,vocab = vocab):
     patterns = {}
     MAX_LEN = 6
     for word in vocab_chunk:
         for second_word in vocab:
             if word != second_word:
                 extract_patterns_in_words(patterns, word, second_word, MAX_LEN)
-    return patterns
+    pattern_chunk_file_w = '../data/patterns/pattern_chunk_' + str(i)
+    with open(pattern_chunk_file_w, 'wb') as f:
+        logging.info("Writing Results to file %s", pattern_chunk_file_w)
+        # Pickle the 'data' dictionary using the highest protocol available.
+        pickle.dump(patterns, f, pickle.HIGHEST_PROTOCOL)
+    del patterns
 
 
 def build_pattern_dict():
@@ -87,16 +92,19 @@ def build_pattern_dict():
         patterns = {}
         with Pool() as pool:
             # Split vocab into 100 chunks to run pattern building in parallel
-            vocab_chunks = (chunks(vocab, int(len(vocab)/100)))
-            jobs = ((vocab_chunk,) for vocab_chunk in vocab_chunks)
-            job_results = pool.starmap(parallel_build_pattern,jobs,chunksize=pool._processes)
-            job_results_file_w = open('../data/job_result_patterns_' + str(len(vocab)), "wb")
-            logging.info("Writing Results to file")
-            pickle.dump(job_results, job_results_file_w )
-            job_results_file_w.close()
+            vocab_chunks = (chunks(vocab, int(len(vocab) / 100)))
+            jobs = ((vocab_chunk, i) for i, vocab_chunk in enumerate(vocab_chunks))
+            pool.starmap(parallel_build_pattern, jobs, chunksize=pool._processes)
+            # job_results_file_w = open('../data/job_result_patterns_' + str(len(vocab)), "wb")
+            # logging.info("Writing Results to file")
+            # pickle.dump(job_results, job_results_file_w )
+            # job_results_file_w.close()
 
-            logging.info("Merging Results")
-            for result in job_results:
+        logging.info("Merging Results")
+        patterns_dir = '../data/patterns/'
+        for filename in os.listdir(patterns_dir):
+            with open(patterns_dir + filename, 'rb') as handle:
+                result = pickle.load(handle)
                 for key in result.keys():
                     if key in patterns:
                         patterns[key] = result[key] + patterns[key]
@@ -105,8 +113,9 @@ def build_pattern_dict():
         logging.info("length of pattern: %s", len(patterns))
         logging.info("Downsampling patterns..")
         sampled_patterns = downsample_patterns(patterns)
-        patterns_file_w = open('../data/sampled_patterns_'+ str(len(vocab)),"wb" )
+        patterns_file_w = open('../data/sampled_patterns_' + str(len(vocab)), "wb")
         pickle.dump(sampled_patterns, patterns_file_w)
+        logging.info("Saved downsampled patterns dict")
         patterns_file_w.close()
         return sampled_patterns
 
