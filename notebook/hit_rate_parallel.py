@@ -23,6 +23,15 @@ import sys
 FORMAT = '%(asctime)-15s %(message)s'
 logging.basicConfig(format=FORMAT, level=logging.INFO, filename='morph_induction.log')
 
+
+logging.info ("\n\n\nLoading Embeddings..")
+word_vectors = KeyedVectors.load_word2vec_format('/home/raja/models/glove50.txt', binary=False)
+vocab_input = word_vectors
+vocab_size = len(vocab_input.vocab)
+logging.info ("Length of the Vocab: %s", vocab_size)
+vocab = list(vocab_input.vocab.keys())
+
+
 def extract_patterns_in_words(patterns,word1,word2,max_len):
     i = 1
     while(word1[:i] == word2[:i]):
@@ -51,7 +60,7 @@ def chunks(l, n):
         yield l[i:i + n]
 
 
-def parallel_build_pattern(vocab_chunk,vocab):
+def parallel_build_pattern(vocab_chunk,vocab = vocab):
     patterns = {}
     MAX_LEN = 6
     for word in vocab_chunk:
@@ -61,7 +70,7 @@ def parallel_build_pattern(vocab_chunk,vocab):
     return patterns
 
 
-def build_pattern_dict(vocab,max_len = 6):
+def build_pattern_dict():
     if os.path.exists('../data/sampled_patterns_'+ str(len(vocab))):
         logging.info("Loading patterns from file")
         patterns_file_r = open('../data/sampled_patterns_'+ str(len(vocab)), 'rb')
@@ -76,18 +85,23 @@ def build_pattern_dict(vocab,max_len = 6):
         #         if word != second_word:
         #             extract_patterns_in_words(patterns,word,second_word,max_len)
         patterns = {}
-        pool = Pool()
-        # Split vocab into 100 chunks to run pattern building in parallel
-        vocab_chunks = list(chunks(list(vocab), int(len(vocab)/100)))
-        jobs = [(vocab_chunk,list(vocab)) for vocab_chunk in vocab_chunks]
-        job_results = pool.starmap(parallel_build_pattern,jobs,chunksize=pool._processes)
-        logging.info("Merging Results")
-        for result in job_results:
-            for key in result.keys():
-                if key in patterns:
-                    patterns[key] = result[key] + patterns[key]
-                else:
-                    patterns[key] = result[key]
+        with Pool() as pool:
+            # Split vocab into 100 chunks to run pattern building in parallel
+            vocab_chunks = (chunks(vocab, int(len(vocab)/100)))
+            jobs = ((vocab_chunk,) for vocab_chunk in vocab_chunks)
+            job_results = pool.starmap(parallel_build_pattern,jobs,chunksize=pool._processes)
+            job_results_file_w = open('../data/job_result_patterns_' + str(len(vocab)), "wb")
+            logging.info("Writing Results to file")
+            pickle.dump(job_results, job_results_file_w )
+            job_results_file_w.close()
+
+            logging.info("Merging Results")
+            for result in job_results:
+                for key in result.keys():
+                    if key in patterns:
+                        patterns[key] = result[key] + patterns[key]
+                    else:
+                        patterns[key] = result[key]
         logging.info("length of pattern: %s", len(patterns))
         logging.info("Downsampling patterns..")
         sampled_patterns = downsample_patterns(patterns)
@@ -342,15 +356,9 @@ def normalize_graph(G):
 
 # word_vectors = KeyedVectors.load_word2vec_format('/home/raja/models/GoogleNews-vectors-negative300.bin.gz', binary=True)
 if __name__ == '__main__':
-    
-    logging.info ("\n\n\nLoading Embeddings..")
-    word_vectors = KeyedVectors.load_word2vec_format('/home/raja/models/glove50.txt', binary=False, limit=10000)
-    vocab_input = KeyedVectors.load_word2vec_format('/home/raja/models/glove50.txt', binary=False, limit=10000)
-    vocab_size = len(vocab_input.vocab)
-    logging.info ("Length of the Vocab: %s", vocab_size)
-    
+
     logging.info ("Getting patterns..")
-    sampled_patterns = build_pattern_dict(vocab_input.vocab.keys())
+    sampled_patterns = build_pattern_dict()
 
     logging.info ("Getting annoyed")
     annoy_index = get_annoy(word_vectors, 'glove')
