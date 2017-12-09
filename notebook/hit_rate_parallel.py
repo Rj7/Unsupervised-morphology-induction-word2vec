@@ -23,13 +23,19 @@ import sys
 FORMAT = '%(asctime)-15s %(message)s'
 logging.basicConfig(format=FORMAT, level=logging.INFO, filename='morph_induction.log')
 
+embedding_file = '/home/raja/models/glove50.txt'
+logging.info("\n\n\nLoading Embeddings: %s", embedding_file)
+word_vectors = KeyedVectors.load_word2vec_format(embedding_file, binary=False)
 
-logging.info ("\n\n\nLoading Embeddings..")
-word_vectors = KeyedVectors.load_word2vec_format('/home/raja/models/glove50.txt', binary=False)
-vocab_input = word_vectors
-vocab_size = len(vocab_input.vocab)
-logging.info ("Length of the Vocab: %s", vocab_size)
-vocab = list(vocab_input.vocab.keys())
+VOCAB_SIZE = len(word_vectors.vocab)
+logging.info("Length of the Vocab: %s", VOCAB_SIZE)
+
+vocab_counter = Counter()
+for word in word_vectors.vocab.keys():
+    vocab_counter[word] = word_vectors.vocab[word].count
+
+# Get only top n words based on count to build morphology transformation.
+vocab = [k for (k, v) in vocab_counter.most_common(VOCAB_SIZE)]
 
 
 def extract_patterns_in_words(patterns,word1,word2,max_len):
@@ -92,7 +98,7 @@ def build_pattern_dict():
         patterns = {}
         with Pool() as pool:
             # Split vocab into 100 chunks to run pattern building in parallel
-            vocab_chunks = (chunks(vocab, int(len(vocab) / 100)))
+            vocab_chunks = (chunks(vocab, int(len(vocab) / 4000)))
             jobs = ((vocab_chunk, i) for i, vocab_chunk in enumerate(vocab_chunks))
             pool.starmap(parallel_build_pattern, jobs, chunksize=pool._processes)
             # job_results_file_w = open('../data/job_result_patterns_' + str(len(vocab)), "wb")
@@ -163,12 +169,11 @@ def get_similarity_rank(word_pair1, word_pair2, similarity_dict):
 
 def get_hit_rate(patterns, similarity_function, annoy_index=None):
     if False:
-        hit_rate_file_r = open('../data/hitrate_'+ str(len(vocab_input.vocab)), 'rb')
+        hit_rate_file_r = open('../data/hitrate_'+ str(len(word_vectors.vocab)), 'rb')
         hit_rates_rules = pickle.load(hit_rate_file_r)
         hit_rate_file_r.close()
         return hit_rates_rules
     else:
-        hit_rate_file_w = open('../data/hitrate_'+ str(len(vocab_input.vocab)),"wb" )
         hit_rates_rules = {}
         for (pattern,support_set) in patterns.items():
             hit_rates_word_pair = {}
@@ -187,6 +192,7 @@ def get_hit_rate(patterns, similarity_function, annoy_index=None):
                     hit_rates_word_pair[pair1] =  hit_pairs
             if len(support_set) != 1 and hit_rates_word_pair:
                 hit_rates_rules[pattern] = hit_rates_word_pair
+        hit_rate_file_w = open('../data/hitrate_' + str(len(word_vectors.vocab)), "wb")
         pickle.dump(hit_rates_rules, hit_rate_file_w)
         hit_rate_file_w.close()
         return hit_rates_rules
@@ -196,7 +202,7 @@ def get_annoy(w2v, embedding_type = 'w2v'):
     dims = 100
     annoy_file_name = '../data/annoy_index_' + '_' + str(dims) + '_' + embedding_type + '_' + str(len(w2v.vocab))
     if os.path.exists(annoy_file_name):
-        logging.info("Loading Annoy from file")
+        logging.info("Loading Annoy from file: %s", annoy_file_name)
         annoy_index = AnnoyIndexer()
         annoy_index.load(annoy_file_name)
         annoy_index.model = word_vectors
@@ -204,6 +210,7 @@ def get_annoy(w2v, embedding_type = 'w2v'):
         logging.info("Creating Annoy")
         annoy_index = AnnoyIndexer(word_vectors,dims)
         annoy_index.save(annoy_file_name)
+        logging.info("Annoy indexing saved to %s", annoy_file_name)
     return annoy_index
 
 
@@ -233,7 +240,7 @@ def iterator_slice(iterator, length):
 def get_hit_rates(sampled_patterns, vocab_size):
     hit_rate_file_name = '../data/hitrate_' + str(vocab_size)
     if os.path.exists(hit_rate_file_name):
-        logging.info("Loading hit rates from file")
+        logging.info("Loading hit rates from file: %s", hit_rate_file_name)
         hit_rate_r = open(hit_rate_file_name, 'rb')
         hit_rates = pickle.load(hit_rate_r)
         hit_rate_r.close()
@@ -323,7 +330,7 @@ def build_graph(G, morphological_rules):
 def normalize_graph(G):
     for node in list(G.nodes):
         for neighbor in list(G.neighbors(node)):
-            if vocab_input.vocab[node].count > vocab_input.vocab[neighbor].count:
+            if word_vectors.vocab[node].count > word_vectors.vocab[neighbor].count:
                 if G.has_edge(node, neighbor):
                     G.remove_edges_from(set(G.in_edges(neighbor,keys=True)) and set(G.out_edges(node,keys=True)))
                 if G.number_of_edges(neighbor, node) > 1:
@@ -373,14 +380,14 @@ if __name__ == '__main__':
     annoy_index = get_annoy(word_vectors, 'glove')
     
     logging.info ("Getting hit rates")
-    hit_rates = get_hit_rates(sampled_patterns, vocab_size)
+    hit_rates = get_hit_rates(sampled_patterns, VOCAB_SIZE)
 
     logging.info ("Getting Morphological rules")
     morphological_rules = update_morpho_rules(hit_rates,sampled_patterns)
 
     logging.info ("Building Graph")
     G = nx.MultiDiGraph()
-    G.add_nodes_from(vocab_input.vocab.keys())
+    G.add_nodes_from(vocab)
 
     logging.info ("Added nodes to Graph")
     G = build_graph(G, morphological_rules)
