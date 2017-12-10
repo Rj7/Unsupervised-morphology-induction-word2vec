@@ -313,14 +313,14 @@ def build_graph(G, morphological_rules):
     pool = Pool()
     pool.starmap(get_similarity_rank, jobs, chunksize=pool._processes)
 
-    for dw,support in morphological_rules.items():
+    for dw, support in morphological_rules.items():
         morp_rule, hit_rate,support_set = support
         (word1, word2) = dw
         for (word3, word4) in support_set:
-            (rank,cos_sim) = similarity_dict[(word1,word2),(word3,word4)]
+            (rank, cos_sim) = similarity_dict[(word1, word2), (word3, word4)]
             if rank < MIN_RANK and cos_sim > MIN_COS:
-                if not G.has_edge(word3,word4,key=dw):
-                    G.add_edge(word3,word4,key=dw,cos=cos_sim,rank=rank)
+                if not G.has_edge(word3, word4, key=dw):
+                    G.add_edge(word3, word4, key=dw, cos=cos_sim, rank=rank, morp_rule=morp_rule)
             else:
     #             print (rank,cos_sim, word3, word2, dw)
                 pass
