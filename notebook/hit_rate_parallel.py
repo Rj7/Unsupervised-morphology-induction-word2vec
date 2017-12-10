@@ -82,9 +82,9 @@ def parallel_build_pattern(vocab_chunk,i,vocab = vocab):
 
 
 def build_pattern_dict():
-    if os.path.exists('../data/sampled_patterns_'+ str(len(vocab))):
+    if os.path.exists('../data/sampled_patterns_'+ str(VOCAB_SIZE)):
         logging.info("Loading patterns from file")
-        patterns_file_r = open('../data/sampled_patterns_'+ str(len(vocab)), 'rb')
+        patterns_file_r = open('../data/sampled_patterns_'+ str(VOCAB_SIZE), 'rb')
         sampled_patterns = pickle.load(patterns_file_r)
         patterns_file_r.close()
         return sampled_patterns
@@ -98,7 +98,7 @@ def build_pattern_dict():
         patterns = {}
         with Pool() as pool:
             # Split vocab into 100 chunks to run pattern building in parallel
-            vocab_chunks = (chunks(vocab, int(len(vocab) / 4000)))
+            vocab_chunks = (chunks(vocab, int(VOCAB_SIZE / 4000)))
             jobs = ((vocab_chunk, i) for i, vocab_chunk in enumerate(vocab_chunks))
             pool.starmap(parallel_build_pattern, jobs, chunksize=pool._processes)
             # job_results_file_w = open('../data/job_result_patterns_' + str(len(vocab)), "wb")
@@ -117,22 +117,25 @@ def build_pattern_dict():
                     else:
                         patterns[key] = result[key]
         logging.info("length of pattern: %s", len(patterns))
+        patterns_file_w = open('../data/patterns_' + str(VOCAB_SIZE), "wb")
+        pickle.dump(patterns, patterns_file_w)
+        logging.info("Saved patterns dict")
+        patterns_file_w.close()
         logging.info("Downsampling patterns..")
         sampled_patterns = downsample_patterns(patterns)
-        patterns_file_w = open('../data/sampled_patterns_' + str(len(vocab)), "wb")
-        pickle.dump(sampled_patterns, patterns_file_w)
+        sampled_patterns_file_w = open('../data/sampled_patterns_' + str(VOCAB_SIZE), "wb")
+        pickle.dump(sampled_patterns, sampled_patterns_file_w)
         logging.info("Saved downsampled patterns dict")
-        patterns_file_w.close()
+        sampled_patterns_file_w.close()
         return sampled_patterns
 
 
 def downsample_patterns(patterns):
     #Downsample to include only top 1000
-    pattern_1000 = defaultdict(list)
     for pattern,items in patterns.items():
         shuffle(items)
-        pattern_1000[pattern] = items[:1000]
-    return pattern_1000
+        patterns[pattern] = items[:1000]
+    return patterns
 
 def pair_wise_similarity(word_pair1, word_pair2,annoy_index=None, topn = 10):
     closest_n = word_vectors.most_similar(positive=[word_pair2[0], word_pair1[1]], negative=[word_pair1[0]], topn=topn)
@@ -169,7 +172,7 @@ def get_similarity_rank(word_pair1, word_pair2, similarity_dict):
 
 def get_hit_rate(patterns, similarity_function, annoy_index=None):
     if False:
-        hit_rate_file_r = open('../data/hitrate_'+ str(len(word_vectors.vocab)), 'rb')
+        hit_rate_file_r = open('../data/hitrate_'+ str(VOCAB_SIZE), 'rb')
         hit_rates_rules = pickle.load(hit_rate_file_r)
         hit_rate_file_r.close()
         return hit_rates_rules
@@ -192,7 +195,7 @@ def get_hit_rate(patterns, similarity_function, annoy_index=None):
                     hit_rates_word_pair[pair1] =  hit_pairs
             if len(support_set) != 1 and hit_rates_word_pair:
                 hit_rates_rules[pattern] = hit_rates_word_pair
-        hit_rate_file_w = open('../data/hitrate_' + str(len(word_vectors.vocab)), "wb")
+        hit_rate_file_w = open('../data/hitrate_' + str(VOCAB_SIZE), "wb")
         pickle.dump(hit_rates_rules, hit_rate_file_w)
         hit_rate_file_w.close()
         return hit_rates_rules
