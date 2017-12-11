@@ -1,24 +1,16 @@
-from multiprocessing import Process, Manager, cpu_count, Pool, current_process
-import nltk
-from collections import defaultdict, Counter
-import gensim, logging
-import numpy as np
+import itertools
+import logging
+import os
+import pickle
+import sys
+from collections import Counter
+from multiprocessing import Manager, Pool
+from operator import itemgetter
+from random import shuffle
+
+import networkx as nx
 from gensim.models.keyedvectors import KeyedVectors
 from gensim.similarities.index import AnnoyIndexer
-from gensim import utils, matutils
-import os
-import collections
-from random import shuffle
-from copy import deepcopy
-from collections import OrderedDict
-import pickle
-import networkx as nx
-import matplotlib.pyplot as plt
-from operator import itemgetter
-from numpy import exp, dot, zeros, outer, dtype, float32 as REAL
-import annoy
-import itertools
-import sys
 
 FORMAT = '%(asctime)-15s %(message)s'
 logging.basicConfig(format=FORMAT, level=logging.INFO, filename='morph_induction.log')
