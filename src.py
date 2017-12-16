@@ -3,6 +3,7 @@ import logging
 import os
 import pickle
 import sys
+import argparse
 from collections import Counter
 from multiprocessing import Manager, Pool
 from operator import itemgetter
@@ -15,12 +16,36 @@ from gensim.similarities.index import AnnoyIndexer
 FORMAT = '%(asctime)-15s %(message)s'
 logging.basicConfig(format=FORMAT, level=logging.INFO, filename='morph_induction.log')
 
-embedding_file = '/home/raja/models/glove50.txt'
-logging.info("\n\n\nLoading Embeddings: %s", embedding_file)
-word_vectors = KeyedVectors.load_word2vec_format(embedding_file, binary=False)
+parser = argparse.ArgumentParser(description='Unsupervised morphology induction')
+parser.add_argument('-e', '--embedding', type=str, choices=['glove', 'word2vec', 'fasttext'],
+                    default='word2vec',
+                    help="The type of word embeddings to use for morphology induction.")
+parser.add_argument('-v', '--vocab_size', type=int, default=None,
+                    help="Vocabulary size to extract morphology from.")
+parser.add_argument('-d', '--data_dir', type=str, default='data',
+                    help="Data directory to store and load files")
 
-VOCAB_SIZE = len(word_vectors.vocab)
-logging.info("Length of the Vocab: %s", VOCAB_SIZE)
+opts = parser.parse_args()
+data_dir = opts.data_dir
+embedding_file = ''
+is_binary_embedding = True
+if opts.embedding == 'glove':
+    embedding_file = '/home/raja/models/glove50.txt'
+    is_binary_embedding = False
+elif opts.embedding == 'word2vec':
+    embedding_file = '/home/raja/models/GoogleNews-vectors-negative300.bin'
+    is_binary_embedding = True
+elif opts.embedding == 'fasttext':
+    embedding_file = '/home/raja/models/wiki-news-300d-1M.vec'
+    is_binary_embedding = False
+
+logging.info("\n\n\nLoading Embeddings: %s", embedding_file)
+word_vectors = KeyedVectors.load_word2vec_format(embedding_file, binary=is_binary_embedding)
+
+if opts.vocab_size:
+    VOCAB_SIZE = opts.vocab_size
+else:
+    VOCAB_SIZE = len(word_vectors.vocab)
 
 vocab_counter = Counter()
 for word in word_vectors.vocab.keys():
@@ -65,7 +90,7 @@ def parallel_build_pattern(vocab_chunk, i, vocab=vocab):
         for second_word in vocab:
             if word != second_word:
                 extract_patterns_in_words(patterns, word, second_word, MAX_LEN)
-    pattern_chunk_file_w = 'data/patterns/pattern_chunk_' + str(i)
+    pattern_chunk_file_w = data_dir + '/patterns/pattern_chunk_' + str(i)
     with open(pattern_chunk_file_w, 'wb') as f:
         logging.info("Writing Results to file %s", pattern_chunk_file_w)
         # Pickle the 'data' dictionary using the highest protocol available.
@@ -74,9 +99,9 @@ def parallel_build_pattern(vocab_chunk, i, vocab=vocab):
 
 
 def build_pattern_dict():
-    if os.path.exists('data/sampled_patterns_' + str(VOCAB_SIZE)):
+    if os.path.exists(data_dir + '/sampled_patterns_' + str(VOCAB_SIZE)):
         logging.info("Loading patterns from file")
-        patterns_file_r = open('data/sampled_patterns_' + str(VOCAB_SIZE), 'rb')
+        patterns_file_r = open(data_dir + '/sampled_patterns_' + str(VOCAB_SIZE), 'rb')
         sampled_patterns = pickle.load(patterns_file_r)
         patterns_file_r.close()
         return sampled_patterns
@@ -93,13 +118,13 @@ def build_pattern_dict():
             vocab_chunks = (chunks(vocab, int(VOCAB_SIZE / 4000)))
             jobs = ((vocab_chunk, i) for i, vocab_chunk in enumerate(vocab_chunks))
             pool.starmap(parallel_build_pattern, jobs, chunksize=pool._processes)
-            # job_results_file_w = open('data/job_result_patterns_' + str(len(vocab)), "wb")
+            # job_results_file_w = open(data_dir + '/job_result_patterns_' + str(len(vocab)), "wb")
             # logging.info("Writing Results to file")
             # pickle.dump(job_results, job_results_file_w )
             # job_results_file_w.close()
 
         logging.info("Merging Results")
-        patterns_dir = 'data/patterns/'
+        patterns_dir = data_dir + '/patterns/'
         for filename in os.listdir(patterns_dir):
             with open(patterns_dir + filename, 'rb') as handle:
                 result = pickle.load(handle)
@@ -109,13 +134,13 @@ def build_pattern_dict():
                     else:
                         patterns[key] = result[key]
         logging.info("length of pattern: %s", len(patterns))
-        patterns_file_w = open('data/patterns_' + str(VOCAB_SIZE), "wb")
+        patterns_file_w = open(data_dir + '/patterns_' + str(VOCAB_SIZE), "wb")
         pickle.dump(patterns, patterns_file_w)
         logging.info("Saved patterns dict")
         patterns_file_w.close()
         logging.info("Downsampling patterns..")
         sampled_patterns = downsample_patterns(patterns)
-        sampled_patterns_file_w = open('data/sampled_patterns_' + str(VOCAB_SIZE), "wb")
+        sampled_patterns_file_w = open(data_dir + '/sampled_patterns_' + str(VOCAB_SIZE), "wb")
         pickle.dump(sampled_patterns, sampled_patterns_file_w)
         logging.info("Saved downsampled patterns dict")
         sampled_patterns_file_w.close()
@@ -168,7 +193,7 @@ def get_similarity_rank(word_pair1, word_pair2, similarity_dict):
 
 def get_hit_rate(patterns, similarity_function, annoy_index=None):
     if False:
-        hit_rate_file_r = open('data/hitrate_' + str(VOCAB_SIZE), 'rb')
+        hit_rate_file_r = open(data_dir + '/hitrate_' + str(VOCAB_SIZE), 'rb')
         hit_rates_rules = pickle.load(hit_rate_file_r)
         hit_rate_file_r.close()
         return hit_rates_rules
@@ -191,7 +216,7 @@ def get_hit_rate(patterns, similarity_function, annoy_index=None):
                     hit_rates_word_pair[pair1] = hit_pairs
             if len(support_set) != 1 and hit_rates_word_pair:
                 hit_rates_rules[pattern] = hit_rates_word_pair
-        hit_rate_file_w = open('data/hitrate_' + str(VOCAB_SIZE), "wb")
+        hit_rate_file_w = open(data_dir + '/hitrate_' + str(VOCAB_SIZE), "wb")
         pickle.dump(hit_rates_rules, hit_rate_file_w)
         hit_rate_file_w.close()
         return hit_rates_rules
@@ -199,7 +224,7 @@ def get_hit_rate(patterns, similarity_function, annoy_index=None):
 
 def get_annoy(w2v, embedding_type='w2v'):
     dims = 100
-    annoy_file_name = 'data/annoy_index_' + '_' + str(dims) + '_' + embedding_type + '_' + str(len(w2v.vocab))
+    annoy_file_name = data_dir + '/annoy_index_' + '_' + str(dims) + '_' + embedding_type + '_' + str(len(w2v.vocab))
     if os.path.exists(annoy_file_name):
         logging.info("Loading Annoy from file: %s", annoy_file_name)
         annoy_index = AnnoyIndexer()
@@ -238,7 +263,7 @@ def iterator_slice(iterator, length):
 
 
 def get_hit_rates(sampled_patterns, vocab_size):
-    hit_rate_file_name = 'data/hitrate_' + str(vocab_size)
+    hit_rate_file_name = data_dir + '/hitrate_' + str(vocab_size)
     if os.path.exists(hit_rate_file_name):
         logging.info("Loading hit rates from file: %s", hit_rate_file_name)
         hit_rate_r = open(hit_rate_file_name, 'rb')
@@ -370,7 +395,7 @@ def normalize_graph(G):
     logging.info("No of nodes in graph: %s", len(G.nodes))
     logging.info("No of edges in graph: %s", len(G.edges))
 
-    norm_graph_file = 'data/norm_graph_' + str(len(G.nodes)) + '_' + str(len(G.edges))
+    norm_graph_file = data_dir + '/norm_graph_' + str(len(G.nodes)) + '_' + str(len(G.edges))
     normalized_graph_w = open(norm_graph_file, "wb")
     pickle.dump(G, normalized_graph_w)
     normalized_graph_w.close()
@@ -381,6 +406,7 @@ def normalize_graph(G):
 
 # word_vectors = KeyedVectors.load_word2vec_format('/home/raja/models/GoogleNews-vectors-negative300.bin.gz', binary=True)
 if __name__ == '__main__':
+    logging.info("Settings: %s", opts)
     logging.info("Getting patterns..")
     sampled_patterns = build_pattern_dict()
 
