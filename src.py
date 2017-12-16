@@ -289,14 +289,14 @@ def get_hit_rates(sampled_patterns, vocab_size):
         return output_hit_rates
 
 
-def update_morpho_rules(patterns, sampled_patterns):
+def update_morpho_rules(hit_rates, sampled_patterns):
     """ Compute best direction vector(s) that explain many rules greedily.
     The recursion stops when it finds all direction vectors explains less than a predefined number of words (10)
     """
     morphological_rules = {}
     MIN_EXPLAINS_COUNT = 4
-    for pattern in patterns:
-        transformations = patterns[pattern]
+    for pattern in hit_rates:
+        transformations = hit_rates[pattern]
         support_set = set(sampled_patterns[pattern])
         while True:
             transformations_by_count = sorted(transformations.items(), key=lambda kv: len(kv[1]), reverse=True)
