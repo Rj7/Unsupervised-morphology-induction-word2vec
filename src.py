@@ -1,9 +1,9 @@
+import argparse
 import itertools
 import logging
 import os
 import pickle
 import sys
-import argparse
 from collections import Counter
 from multiprocessing import Manager, Pool
 from operator import itemgetter
@@ -17,8 +17,8 @@ FORMAT = '%(asctime)-15s %(message)s'
 logging.basicConfig(format=FORMAT, level=logging.INFO, filename='morph_induction.log')
 
 parser = argparse.ArgumentParser(description='Unsupervised morphology induction')
-parser.add_argument('-e', '--embedding', type=str, choices=['glove', 'word2vec', 'fasttext'],
-                    default='word2vec',
+parser.add_argument('-e', '--embedding', type=str, choices=['glove', 'w2v', 'fasttext'],
+                    default='w2v',
                     help="The type of word embeddings to use for morphology induction.")
 parser.add_argument('-v', '--vocab_size', type=int, default=None,
                     help="Vocabulary size to extract morphology from.")
@@ -32,7 +32,7 @@ is_binary_embedding = True
 if opts.embedding == 'glove':
     embedding_file = '/home/raja/models/glove50.txt'
     is_binary_embedding = False
-elif opts.embedding == 'word2vec':
+elif opts.embedding == 'w2v':
     embedding_file = '/home/raja/models/GoogleNews-vectors-negative300.bin'
     is_binary_embedding = True
 elif opts.embedding == 'fasttext':
@@ -57,7 +57,7 @@ vocab = [k for (k, v) in vocab_counter.most_common(VOCAB_SIZE)]
 
 def extract_patterns_in_words(patterns, word1, word2, max_len):
     i = 1
-    while (word1[:i] == word2[:i]):
+    while word1[:i] == word2[:i]:
         i = i + 1
     if i != 1 and i > max(len(word1[i - 1:]), len(word2[i - 1:])) < max_len:
         if ("suffix", word1[i - 1:], word2[i - 1:]) in patterns:
@@ -66,7 +66,7 @@ def extract_patterns_in_words(patterns, word1, word2, max_len):
             patterns[("suffix", word1[i - 1:], word2[i - 1:])] = [(word1, word2)]
             #         patterns[("suffix",word1[i-1:], word2[i-1:], word1, word2)] += 1
     i = 1
-    while (word1[-i:] == word2[-i:]):
+    while word1[-i:] == word2[-i:]:
         i = i + 1
     if i != 1 and max(len(word1[:-i + 1]), len(word2[:-i + 1])) < max_len:
         if ("prefix", word1[:-i + 1], word2[:-i + 1]) in patterns:
@@ -99,9 +99,10 @@ def parallel_build_pattern(vocab_chunk, i, vocab=vocab):
 
 
 def build_pattern_dict():
-    if os.path.exists(data_dir + '/sampled_patterns_' + str(VOCAB_SIZE)):
-        logging.info("Loading patterns from file")
-        patterns_file_r = open(data_dir + '/sampled_patterns_' + str(VOCAB_SIZE), 'rb')
+    patterns_dict_file = data_dir + '/sampled_patterns_' + str(VOCAB_SIZE)
+    if os.path.exists(patterns_dict_file):
+        logging.info("Loading patterns from file: %s", patterns_dict_file)
+        patterns_file_r = open(patterns_dict_file, 'rb')
         sampled_patterns = pickle.load(patterns_file_r)
         patterns_file_r.close()
         return sampled_patterns
@@ -140,7 +141,7 @@ def build_pattern_dict():
         patterns_file_w.close()
         logging.info("Downsampling patterns..")
         sampled_patterns = downsample_patterns(patterns)
-        sampled_patterns_file_w = open(data_dir + '/sampled_patterns_' + str(VOCAB_SIZE), "wb")
+        sampled_patterns_file_w = open(patterns_dict_file, "wb")
         pickle.dump(sampled_patterns, sampled_patterns_file_w)
         logging.info("Saved downsampled patterns dict")
         sampled_patterns_file_w.close()
@@ -297,7 +298,7 @@ def update_morpho_rules(patterns, sampled_patterns):
     for pattern in patterns:
         transformations = patterns[pattern]
         support_set = set(sampled_patterns[pattern])
-        while (True):
+        while True:
             transformations_by_count = sorted(transformations.items(), key=lambda kv: len(kv[1]), reverse=True)
             best = transformations_by_count[0]
             #         print (transformations_by_count)
@@ -404,14 +405,13 @@ def normalize_graph(G):
     return G
 
 
-# word_vectors = KeyedVectors.load_word2vec_format('/home/raja/models/GoogleNews-vectors-negative300.bin.gz', binary=True)
 if __name__ == '__main__':
     logging.info("Settings: %s", opts)
     logging.info("Getting patterns..")
     sampled_patterns = build_pattern_dict()
 
     logging.info("Getting annoyed")
-    annoy_index = get_annoy(word_vectors, 'glove')
+    annoy_index = get_annoy(word_vectors, opts.embedding)
 
     logging.info("Getting hit rates")
     hit_rates = get_hit_rates(sampled_patterns, VOCAB_SIZE)
