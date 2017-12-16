@@ -4,6 +4,7 @@ import logging
 import os
 import pickle
 import sys
+import shelve
 from collections import Counter
 from multiprocessing import Manager, Pool
 from operator import itemgetter
@@ -103,12 +104,10 @@ def parallel_build_pattern(vocab_chunk, i, vocab=vocab):
 
 def build_pattern_dict():
     patterns_dict_file = data_dir + '/sampled_patterns_' + str(VOCAB_SIZE)
-    if os.path.exists(patterns_dict_file):
+    if os.path.exists(patterns_dict_file + '.dat'):
         logging.info("Loading patterns from file: %s", patterns_dict_file)
-        patterns_file_r = open(patterns_dict_file, 'rb')
-        sampled_patterns = pickle.load(patterns_file_r)
-        patterns_file_r.close()
-        return sampled_patterns
+        patterns = shelve.open(patterns_dict_file)
+        return patterns
     else:
         logging.info("Creating patterns")
         # patterns  = {}
@@ -116,10 +115,9 @@ def build_pattern_dict():
         #     for second_word in vocab:
         #         if word != second_word:
         #             extract_patterns_in_words(patterns,word,second_word,max_len)
-        patterns = {}
         with Pool() as pool:
             # Split vocab into 100 chunks to run pattern building in parallel
-            vocab_chunks = (chunks(vocab, int(VOCAB_SIZE / 4000)))
+            vocab_chunks = (chunks(vocab, int(VOCAB_SIZE / 100)))
             jobs = ((vocab_chunk, i) for i, vocab_chunk in enumerate(vocab_chunks))
             pool.starmap(parallel_build_pattern, jobs, chunksize=pool._processes)
             # job_results_file_w = open(data_dir + '/job_result_patterns_' + str(len(vocab)), "wb")
@@ -129,26 +127,23 @@ def build_pattern_dict():
 
         logging.info("Merging Results")
         patterns_dir = data_dir + '/patterns/'
+        patterns = shelve.open(patterns_dict_file)
         for filename in os.listdir(patterns_dir):
             with open(patterns_dir + filename, 'rb') as handle:
                 result = pickle.load(handle)
                 for key in result.keys():
-                    if key in patterns:
-                        patterns[key] = result[key] + patterns[key]
+                    if repr(key) in patterns:
+                        patterns[repr(key)] = result[key] + patterns[repr(key)]
                     else:
-                        patterns[key] = result[key]
+                        patterns[repr(key)] = result[key]
         logging.info("length of pattern: %s", len(patterns))
-        patterns_file_w = open(data_dir + '/patterns_' + str(VOCAB_SIZE), "wb")
-        pickle.dump(patterns, patterns_file_w)
         logging.info("Saved patterns dict")
-        patterns_file_w.close()
         logging.info("Downsampling patterns..")
-        sampled_patterns = downsample_patterns(patterns)
-        sampled_patterns_file_w = open(patterns_dict_file, "wb")
-        pickle.dump(sampled_patterns, sampled_patterns_file_w)
+        for pattern, items in patterns.items():
+            shuffle(items)
+            patterns[pattern] = items[:1000]
         logging.info("Saved downsampled patterns dict")
-        sampled_patterns_file_w.close()
-        return sampled_patterns
+        return patterns
 
 
 def downsample_patterns(patterns):
