@@ -54,6 +54,10 @@ for word in word_vectors.vocab.keys():
 # Get only top n words based on count to build morphology transformation.
 vocab = [k for (k, v) in vocab_counter.most_common(VOCAB_SIZE)]
 
+MIN_EXPLAINS_COUNT = 4
+MIN_RANK = 3
+MIN_COS = 0.5
+MAX_LEN = 6
 
 def extract_patterns_in_words(patterns, word1, word2, max_len):
     i = 1
@@ -85,7 +89,6 @@ def chunks(l, n):
 
 def parallel_build_pattern(vocab_chunk, i, vocab=vocab):
     patterns = {}
-    MAX_LEN = 6
     for word in vocab_chunk:
         for second_word in vocab:
             if word != second_word:
@@ -294,7 +297,6 @@ def update_morpho_rules(hit_rates, sampled_patterns):
     The recursion stops when it finds all direction vectors explains less than a predefined number of words (10)
     """
     morphological_rules = {}
-    MIN_EXPLAINS_COUNT = 4
     for pattern in hit_rates:
         transformations = hit_rates[pattern]
         support_set = set(sampled_patterns[pattern])
@@ -330,8 +332,6 @@ def update_morpho_rules(hit_rates, sampled_patterns):
 
 def build_graph(G, morphological_rules):
     logging.info("Adding edges to the graph")
-    MIN_RANK = 3
-    MIN_COS = 0.5
     similarity_dict = Manager().dict()
     jobs = (((word1, word2), (word3, word4), similarity_dict)
             for (word1, word2), (morp_rule, hit_rate, support_set) in morphological_rules.items()
