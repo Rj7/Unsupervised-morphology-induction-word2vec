@@ -14,7 +14,7 @@ from gensim.models.keyedvectors import KeyedVectors
 from gensim.similarities.index import AnnoyIndexer
 
 FORMAT = '%(asctime)-15s %(message)s'
-logging.basicConfig(format=FORMAT, level=logging.INFO, filename='morph_induction.log')
+logging.basicConfig(format=FORMAT, level=logging.INFO, filename='glove_nonpersis_morph_induction.log')
 
 parser = argparse.ArgumentParser(description='Unsupervised morphology induction')
 parser.add_argument('-e', '--embedding', type=str, choices=['glove', 'w2v', 'fasttext'],
@@ -30,7 +30,7 @@ data_dir = opts.data_dir
 embedding_file = ''
 is_binary_embedding = True
 if opts.embedding == 'glove':
-    embedding_file = '/home/raja/models/glove50.txt'
+    embedding_file = '/hpchome/gunasekar/models/glove.6B.50d.txt'
     is_binary_embedding = False
 elif opts.embedding == 'w2v':
     embedding_file = '/home/raja/models/GoogleNews-vectors-negative300.bin'
@@ -54,10 +54,12 @@ for word in word_vectors.vocab.keys():
 # Get only top n words based on count to build morphology transformation.
 vocab = [k for (k, v) in vocab_counter.most_common(VOCAB_SIZE)]
 
-MIN_EXPLAINS_COUNT = 4
-MIN_RANK = 3
+MIN_EXPLAINS_COUNT = 10
+MIN_RANK = 30
 MIN_COS = 0.5
 MAX_LEN = 6
+
+logging.info("explain_cout: %s , min_rank: %s , min_cos: %s , max_len: %s", MIN_EXPLAINS_COUNT, MIN_RANK, MIN_COS, MAX_LEN)
 
 def extract_patterns_in_words(patterns, word1, word2, max_len):
     i = 1
@@ -117,11 +119,11 @@ def build_pattern_dict():
         #         if word != second_word:
         #             extract_patterns_in_words(patterns,word,second_word,max_len)
         patterns = {}
-        with Pool() as pool:
+        #with Pool() as pool:
             # Split vocab into 100 chunks to run pattern building in parallel
-            vocab_chunks = (chunks(vocab, int(VOCAB_SIZE / 4000)))
-            jobs = ((vocab_chunk, i) for i, vocab_chunk in enumerate(vocab_chunks))
-            pool.starmap(parallel_build_pattern, jobs, chunksize=pool._processes)
+            #vocab_chunks = (chunks(vocab, int(VOCAB_SIZE / 4000)))
+            #jobs = ((vocab_chunk, i) for i, vocab_chunk in enumerate(vocab_chunks))
+            #pool.starmap(parallel_build_pattern, jobs, chunksize=pool._processes)
             # job_results_file_w = open(data_dir + '/job_result_patterns_' + str(len(vocab)), "wb")
             # logging.info("Writing Results to file")
             # pickle.dump(job_results, job_results_file_w )
@@ -129,7 +131,8 @@ def build_pattern_dict():
 
         logging.info("Merging Results")
         patterns_dir = data_dir + '/patterns/'
-        for filename in os.listdir(patterns_dir):
+        for _, filename in enumerate(os.listdir(patterns_dir)):
+            logging.info("Merging file no: %s", _)
             with open(patterns_dir + filename, 'rb') as handle:
                 result = pickle.load(handle)
                 for key in result.keys():
@@ -161,7 +164,7 @@ def downsample_patterns(patterns):
 
 def pair_wise_similarity(word_pair1, word_pair2, annoy_index=None, topn=10):
     closest_n = word_vectors.most_similar(positive=[word_pair2[0], word_pair1[1]], negative=[word_pair1[0]], topn=topn)
-    #     print (word_pair2[1])
+    #     print (word_pair2[1])logging.info("Settings: %s", opts)
     #     print (closest_n)
     for word, cos_sim in closest_n:
         if word == word_pair2[1]:
@@ -406,28 +409,30 @@ def normalize_graph(G):
 
 
 if __name__ == '__main__':
-    logging.info("Settings: %s", opts)
-    logging.info("Getting patterns..")
-    sampled_patterns = build_pattern_dict()
+    try:
+        logging.info("Settings: %s", opts)
+        logging.info("Getting patterns..")
+        sampled_patterns = build_pattern_dict()
 
-    logging.info("Getting annoyed")
-    annoy_index = get_annoy(word_vectors, opts.embedding)
+        logging.info("Getting annoyed")
+        annoy_index = get_annoy(word_vectors, opts.embedding)
 
-    logging.info("Getting hit rates")
-    hit_rates = get_hit_rates(sampled_patterns, VOCAB_SIZE)
+        logging.info("Getting hit rates")
+        hit_rates = get_hit_rates(sampled_patterns, VOCAB_SIZE)
 
-    logging.info("Getting Morphological rules")
-    morphological_rules = update_morpho_rules(hit_rates, sampled_patterns)
+        logging.info("Getting Morphological rules")
+        morphological_rules = update_morpho_rules(hit_rates, sampled_patterns)
 
-    logging.info("Building Graph")
-    G = nx.MultiDiGraph()
-    G.add_nodes_from(vocab)
+        logging.info("Building Graph")
+        G = nx.MultiDiGraph()
+        G.add_nodes_from(vocab)
 
-    logging.info("Added nodes to Graph")
-    G = build_graph(G, morphological_rules)
+        logging.info("Added nodes to Graph")
+        G = build_graph(G, morphological_rules)
 
-    logging.info("Normalizing graph based on count")
-    G = normalize_graph(G)
-    logging.info("END!!")
-
+        logging.info("Normalizing graph based on count")
+        G = normalize_graph(G)
+        logging.info("END!!")
+    except Exception as e:
+        logging.info("Error: %s", e)
     sys.exit()
