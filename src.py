@@ -3,8 +3,8 @@ import itertools
 import logging
 import os
 import pickle
-import sys
 import shelve
+import sys
 from collections import Counter
 from multiprocessing import Manager, Pool
 from operator import itemgetter
@@ -59,6 +59,7 @@ MIN_EXPLAINS_COUNT = 4
 MIN_RANK = 3
 MIN_COS = 0.5
 MAX_LEN = 6
+
 
 def extract_patterns_in_words(patterns, word1, word2, max_len):
     i = 1

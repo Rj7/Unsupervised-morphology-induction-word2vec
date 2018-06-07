@@ -119,8 +119,6 @@ dependencies:
   - cython==0.27.3
   - cytoolz==0.8.2
   - dill==0.2.7.1
-  - en-core-web-sm==2.0.0
-  - en-vectors-web-lg==2.0.0
   - enum34==1.1.6
   - ftfy==4.4.3
   - gensim==3.1.0
@@ -136,7 +134,6 @@ dependencies:
   - msgpack-python==0.4.8
   - murmurhash==0.28.0
   - networkx==2.0
-  - networkxd3==0.20
   - pathlib==1.0.1
   - plac==0.9.6
   - preshed==1.0.0
