@@ -62,6 +62,14 @@ MAX_LEN = 6
 
 
 def extract_patterns_in_words(patterns, word1, word2, max_len):
+    """
+    Given two words, extracts unknown common patterns (suffix or prefix ) of max_len
+    :param patterns: dict of all patterns
+    :param word1: first word
+    :param word2: second word
+    :param max_len: maximum length of the common prefix and suffix
+    :return:
+    """
     i = 1
     while word1[:i] == word2[:i]:
         i = i + 1
@@ -90,6 +98,13 @@ def chunks(l, n):
 
 
 def parallel_build_pattern(vocab_chunk, i, vocab=vocab_words):
+    """
+    Parallely build patterns from each vocab chunk against the complete vocab
+    :param vocab_chunk: a chunk of vocab used to extract patterns
+    :param i: chunk number used to logging/tracking
+    :param vocab: complete vocab used for matching patterns for each word in vocab chunk
+    :return:
+    """
     patterns = {}
     for first_word in vocab_chunk:
         for second_word in vocab:
@@ -104,6 +119,11 @@ def parallel_build_pattern(vocab_chunk, i, vocab=vocab_words):
 
 
 def build_pattern_dict():
+    """
+    Extract all possible prefix and suffix for each word pairs in the vocabulary.
+    The vocab is split into n(=100) chunks and each chunk is passed to individual cores to extract patterns in parallel.
+    :return: extracted downsampled patterns
+    """
     patterns_dict_file = data_dir + '/sampled_patterns_' + str(VOCAB_SIZE)
     if os.path.exists(patterns_dict_file + '.dat'):
         logging.info("Loading patterns from file: %s", patterns_dict_file)
@@ -111,20 +131,11 @@ def build_pattern_dict():
         return patterns
     else:
         logging.info("Creating patterns")
-        # patterns  = {}
-        # for word in vocab:
-        #     for second_word in vocab:
-        #         if word != second_word:
-        #             extract_patterns_in_words(patterns,word,second_word,max_len)
         with Pool() as pool:
             # Split vocab into 100 chunks to run pattern building in parallel
             vocab_chunks = (chunks(vocab_words, int(VOCAB_SIZE / 100)))
             jobs = ((vocab_chunk, i) for i, vocab_chunk in enumerate(vocab_chunks))
             pool.starmap(parallel_build_pattern, jobs, chunksize=pool._processes)
-            # job_results_file_w = open(data_dir + '/job_result_patterns_' + str(len(vocab)), "wb")
-            # logging.info("Writing Results to file")
-            # pickle.dump(job_results, job_results_file_w )
-            # job_results_file_w.close()
 
         logging.info("Merging Results")
         patterns_dir = data_dir + '/patterns/'
@@ -144,7 +155,11 @@ def build_pattern_dict():
 
 
 def downsample_patterns(patterns):
-    # Downsample to include only top 1000
+    """
+    Downsample to include only top 1000 word pairs for each pattern. This is done to speed up the development.
+    :param patterns: dict of all patterns
+    :return: downsampled patterns based on count (n =1000)
+    """
     for pattern, items in patterns.items():
         shuffle(items)
         patterns[pattern] = items[:1000]
@@ -152,21 +167,18 @@ def downsample_patterns(patterns):
     return patterns
 
 
-def pair_wise_similarity(word_pair1, word_pair2, topn=10):
-    closest_n = word_vectors.most_similar(positive=[word_pair2[0], word_pair1[1]], negative=[word_pair1[0]], topn=topn)
-    #     print (word_pair2[1])
-    #     print (closest_n)
-    for word, cos_sim in closest_n:
-        if word == word_pair2[1]:
-            return True
-    return False
-
-
-def annoy_pair_wise_similarity(word_pair1, word_pair2, indexer, topn=10):
+def pair_wise_similarity(word_pair1, word_pair2, indexer=None, topn=10):
+    """
+    Check if word similarity hold using x1 - x2 + y1 = y2
+    Find the top-N most similar words of (x1 - x2 + y1) and check if y2 is in it. Uses gensim index by default.
+    :param word_pair1: x1 and x2
+    :param word_pair2: y1 and y2
+    :param indexer:  indexer used for similarity check. Uses gensim index by default.
+    :param topn: number of top words to check for
+    :return: True if similarity holds else False
+    """
     closest_n = word_vectors.most_similar(positive=[word_pair2[0], word_pair1[1]], negative=[word_pair1[0]], topn=topn,
                                           indexer=indexer)
-    #     print (word_pair2[1])
-    #     print (closest_n)
     for word, cos_sim in closest_n:
         if word == word_pair2[1]:
             return True
@@ -174,11 +186,16 @@ def annoy_pair_wise_similarity(word_pair1, word_pair2, indexer, topn=10):
 
 
 def get_similarity_rank(word_pair1, word_pair2, similarity_dict):
+    """
+    Get the similarity rank of the given word pairs
+    :param word_pair1:
+    :param word_pair2:
+    :param similarity_dict: dictionary used to store the similarity ranks and cosine similarity
+    :return: None
+    """
     topn = 500
     closest_n = word_vectors.most_similar(positive=[word_pair2[0], word_pair1[1]], negative=[word_pair1[0]], topn=topn,
                                           indexer=annoy_index)
-    #     print (word_pair2[1])
-    #     print (closest_n)
     outside_topn = True
     for n, (word, cos_sim) in enumerate(closest_n):
         if word == word_pair2[1]:
@@ -216,6 +233,12 @@ def get_hit_rate(patterns, similarity_function, indexer=None):
 
 
 def get_annoy(w2v, embedding_type='w2v'):
+    """
+    Load annoy indexer from file if available. Else, build an Annoy index using word vectors from a Word2Vec model
+    :param w2v: embedding model
+    :param embedding_type: embedding model type. eg: w2v or glove
+    :return: return the generated indexer.
+    """
     dims = 100
     annoy_file_name = data_dir + '/annoy_index_' + '_' + str(dims) + '_' + embedding_type + '_' + str(len(w2v.vocab))
     if os.path.exists(annoy_file_name):
@@ -232,12 +255,19 @@ def get_annoy(w2v, embedding_type='w2v'):
 
 
 def get_hit_rules(pattern, support_set, hit_rates_rules):
+    """
+    Compute the percentage of word pairs in support set for each pattern for which similarity holds.
+    :param pattern: pattern to compute hit rate
+    :param support_set: support set on which hit rate is computes.
+    :param hit_rates_rules: global hit rate dict
+    :return: None
+    """
     hit_rates_word_pair = {}
     for pair1 in support_set:
         hit_count = 0
         hit_pairs = set()
         for pair2 in support_set:
-            if pair1 != pair2 and annoy_pair_wise_similarity(pair1, pair2, annoy_index, 10):
+            if pair1 != pair2 and pair_wise_similarity(pair1, pair2, annoy_index, 10):
                 hit_count += 1
                 hit_pairs.add(pair2)
         if hit_count:
@@ -256,6 +286,13 @@ def iterator_slice(iterator, length):
 
 
 def get_hit_rates(sampled_patterns, vocab_size):
+    """
+    Compute hit rate for each pattern on their support set. Load if hitrate is available else generate hitrate in
+    parallel by running each support set in separate core.
+    :param sampled_patterns: downsampled pattern
+    :param vocab_size: vocab size of the word2vec model
+    :return: compute hit rate
+    """
     hit_rate_file_name = data_dir + '/hitrate_' + str(vocab_size)
     if os.path.exists(hit_rate_file_name):
         logging.info("Loading hit rates from file: %s", hit_rate_file_name)
@@ -271,7 +308,7 @@ def get_hit_rates(sampled_patterns, vocab_size):
                      ((pattern, support_set, hit_rates_) for pattern, support_set in sampled_patterns.items()),
                      chunksize=pool._processes)
         logging.info("No of hits %s", len(hit_rates_))
-        #     hit_rates = get_hit_rate(sampled_patterns, annoy_pair_wise_similarity, annoy_index)
+        #     hit_rates = get_hit_rate(sampled_patterns, pair_wise_similarity, annoy_index)
         output_hit_rates = {}
         output_hit_rates.update(hit_rates)
         hit_rate_file_w = open(hit_rate_file_name, "wb")
@@ -282,8 +319,12 @@ def get_hit_rates(sampled_patterns, vocab_size):
 
 
 def update_morpho_rules(hit_rates_, sampled_patterns):
-    """ Compute best direction vector(s) that explain many rules greedily.
+    """
+    Compute best direction vector(s) that explain many rules greedily.
     The recursion stops when it finds all direction vectors explains less than a predefined number of words (10)
+    :param hit_rates_: dictionary of hit rates and morphological transformations
+    :param sampled_patterns: downsampled patterns used to extract morph rules
+    :return: extracted morphologically rules used to build the graph.
     """
     morph_rules = {}
     for pattern in hit_rates_:
@@ -320,6 +361,13 @@ def update_morpho_rules(hit_rates_, sampled_patterns):
 
 
 def add_graph_edges(di_graph, morph_rules):
+    """
+    The morphological rules are filtered based on cosine similarity and cosin rank threshold. All the mappings in the
+    resulting morphological rules are used to extract edges and are added in the graph.
+    :param di_graph: graph in which the edges will be added.
+    :param morph_rules: morphological rules from which edges will be extracted and added in the graph.
+    :return: Graph with edges added from rules.
+    """
     logging.info("Adding edges to the graph")
     similarity_dict = Manager().dict()
     jobs = (((word1, word2), (word3, word4), similarity_dict)
@@ -346,6 +394,11 @@ def add_graph_edges(di_graph, morph_rules):
 
 
 def normalize_and_save_graph(di_graph):
+    """
+    Normalize the directed multigraph based on count, cosine similarity score and cosine rank.
+    :param di_graph: Directed multigraph that needs to be normalized.
+    :return: None
+    """
     for node in list(di_graph.nodes):
         for neighbor in list(di_graph.neighbors(node)):
             if word_vectors.vocab[node].count > word_vectors.vocab[neighbor].count:
