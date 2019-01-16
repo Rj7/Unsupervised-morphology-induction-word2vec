@@ -1,5 +1,5 @@
 # Unsupervised-morphology-induction-word2vec
-Implementation of the following paper for CMPT882: Neruo Machine Translation course at Simon Fraser University
+Implementation of the following paper for CMPT882: Neuro Machine Translation course at Simon Fraser University
 
 Soricut, Radu, and Franz Och. "Unsupervised morphology induction using word embeddings." Proceedings of the 2015 Conference of the North American Chapter of the Association for Computational Linguistics: Human Language Technologies. 2015.
 http://www.aclweb.org/anthology/N15-1186
